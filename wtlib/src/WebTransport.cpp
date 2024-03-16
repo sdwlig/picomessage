@@ -1894,6 +1894,7 @@ void WebTransport::print_address(FILE* F_log, struct sockaddr* address, char* la
 int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode,
 				 void* callback_ctx, void* callback_arg)
 {
+  // LOGD("wt: server: server_loop_cb called");
   WebTransport* wt = (WebTransport*)callback_ctx;
   wt_ctx_t* ctx = &wt->ctx;
   picoquic_cnx_t* cnx = wt->ctx.cnx;
@@ -1905,7 +1906,6 @@ int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
   else {
     switch (cb_mode) {
     case picoquic_packet_loop_ready:
-      // {LOG("wt: Waiting for packets.\n");}
       {
 	LOGD("wt: server: PICOQUIC waiting for packets");
 	auto options = (picoquic_packet_loop_options_t*)callback_arg;
@@ -1915,6 +1915,7 @@ int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
       break;
     case picoquic_packet_loop_time_check:
       {
+	// {LOG("wt: server_loop loop_time_check");}
 	auto time_check_arg = (packet_loop_time_check_arg_t*)callback_arg;
 	time_check_arg->delta_t = 1 * 1000; // 2ms
 	if (cnx && ctx && (ctx->state == wt_state_sending || ctx->state == wt_state_ready)) {
@@ -1944,10 +1945,13 @@ int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
       }
       break;
     case picoquic_packet_loop_after_receive:
+      {LOG("wt: server_loop after_receive");}
       break;
     case picoquic_packet_loop_after_send:
+      // {LOG("wt: server_loop after_send");}
       break;
     case picoquic_packet_loop_port_update:
+      {LOG("wt: server_loop port_update");}
       break;
     default:
       ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;

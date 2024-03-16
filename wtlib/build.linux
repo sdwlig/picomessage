@@ -1,0 +1,8 @@
+#!/bin/bash
+
+rm -rf build
+set -e
+mkdir -p build 2>/dev/null
+cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..
+ninja
