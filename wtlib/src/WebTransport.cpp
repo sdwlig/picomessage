@@ -26,9 +26,6 @@
 
 using namespace std::chrono;
 
-// #include "common.h"
-// #include "stream.h"
-
 #include "WebTransport.hpp"
 
 #ifndef PRIu64
@@ -69,6 +66,7 @@ using namespace std::chrono;
 #define VNLogError LOGE
 #define VNLogInfo  LOGI
 #endif
+std::mutex logMutex;
 
 #ifndef PICOQUIC_VERSION
 #define PICOQUIC_VERSION  "1.1.14.0"
@@ -498,42 +496,6 @@ int WebTransport::app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_
   return ret;
 }
 
-
-int WebTransport::app_ctx_init_hide(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx)
-{
-  int ret = 0;
-  
-  /* Init the stream tree */
-  /* Do we use the path table for the client? or the web folder? */
-  /* connection wide tracking of stream prefixes */
-  if (h3_ctx == NULL) {
-    ret = -1;
-  }
-  else {
-    ctx.h3_ctx = h3_ctx;
-    
-    /* Connection flags connection_ready and connection_closed are left
-     * to zero by default. */
-    /* init the protocol will be done in the "accept" call for server */
-    
-    if (stream_ctx != NULL) {
-      /* Register the control stream and the stream id */
-      ctx.control_stream_id = stream_ctx->stream_id;
-      stream_ctx->ps.stream_state.control_stream_id = stream_ctx->stream_id;
-      stream_ctx->path_callback_ctx = this;
-      ret = h3zero_declare_stream_prefix(ctx.h3_ctx, stream_ctx->stream_id, client_callback, &ctx);
-    }
-    else {
-      /* Poison the control stream ID field so errors can be detected. */
-      ctx.control_stream_id = UINT64_MAX;
-    }
-  }
-  
-  if (ret != 0) {
-    /* Todo: undo init. */
-  }
-  return ret;
-}
 
 
 /* Client:
@@ -1177,7 +1139,11 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
 {
   int ret = 0;
   WebTransport* wt = (WebTransport*)path_app_ctx; // callback_ctx;
-  LOGD("wt_client_callback: %d, %" PRIi64 "\n", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
+  if ((int)wt_event == 8) {
+    // LOGD("8"); // Prepare to send
+  } else {
+    LOGD("client_callback: %d, %" PRIi64 "\n", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
+  }
   switch (wt_event) {
   case picohttp_callback_connecting:
     {
@@ -1186,30 +1152,15 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
     }
     break;
   case picohttp_callback_connect:
-    /* A connect has been received on this stream, and could be accepted.
-     */
-    /* The web transport should create a web transport connection context,
-     * and also register the stream ID as identifying this context.
-     * Then, callback the application. That means the WT app context
-     * should be obtained from the path app context, etc.
-     */
     {
       LOGD("wt: wt_client_callback connect");
       ret = wt->accept_client(bytes, length, stream_ctx);
     }
     break;
   case picohttp_callback_connect_refused:
-    /* The response from the server has arrived and it is negative. The
-     * application needs to close that stream.
-     * Do we need an error code? Maybe pass as bytes + length.
-     * Application should clean up the app context.
-     */
     LOGE("wt: connect_refused");
     break;
   case picohttp_callback_connect_accepted: /* Connection request was accepted by peer */
-    /* The response from the server has arrived and it is positive.
-     * The application can start sending data.
-     */
     {
       LOGD("wt: wt_client_callback accepted");
       if (stream_ctx != NULL)
@@ -1224,26 +1175,17 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
     
   case picohttp_callback_post_fin:
   case picohttp_callback_post_data:
-    /* Data received on a stream for which the per-app stream context is known.
-     * the app just has to process the data, and process the fin bit if present.
-     */
     {
       ret = wt->stream_data(bytes, length, (wt_event == picohttp_callback_post_fin),
 			    stream_ctx);
     }
     break;
   case picohttp_callback_provide_data: /* Stack is ready to send chunk of response */
-    /* We assume that the required stream headers have already been pushed,
-     * and that the stream context is already set. Just send the data.
-     */
     {
       ret = wt->provide_data(length, stream_ctx);
     }
     break;
   case picohttp_callback_post_datagram:
-    /* Data received on a stream for which the per-app stream context is known.
-     * the app just has to process the data.
-     */
     {
       ret = wt->receive_datagram(bytes, length, stream_ctx);
     }
@@ -1562,7 +1504,7 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
   if (ret == 0) {
     /* Wait for packets */
     packet_loop_param.local_port = 0;
-    packet_loop_param.local_af = AF_INET; // AF_UNSPEC, AF_INET, AF_INET6
+    packet_loop_param.local_af = AF_UNSPEC; // AF_UNSPEC, AF_INET, AF_INET6
     packet_loop_param.dest_if = 0;
     packet_loop_param.socket_buffer_size = 0;
     packet_loop_param.do_not_use_gso = 0;
@@ -1756,6 +1698,7 @@ int WebTransport::server(std::string serverName, int port, const std::string con
   
   server_name = serverName;
   config->server_port = port ? port : default_server_port;
+  wt->server_port = config->server_port;
     
   /* Run as server */
   {LOG("wt: Starting Picoquic server (v%s) on port %d, server name = %s, just_once = %d, do_retry = %d\n",
@@ -1788,11 +1731,11 @@ int WebTransport::server(std::string serverName, int port, const std::string con
     if (ret == 0) {
       quic = picoquic_create_and_configure(config, picoquic_demo_server_callback, &picoquic_file_param, current_time, NULL);
       static struct sockaddr_storage server_address;
-      picoquic_cnx_t* cnx = cnx = picoquic_create_cnx(quic, picoquic_null_connection_id,
-						      picoquic_null_connection_id,
-						      nullptr, // (struct sockaddr*) & server_address,
-						      current_time, 0, "localhost", "h3", 1);
-      wt->ctx.cnx = cnx;
+      // picoquic_cnx_t* cnx = cnx = picoquic_create_cnx(quic, picoquic_null_connection_id,
+      //					      picoquic_null_connection_id,
+      //					      nullptr, // (struct sockaddr*) & server_address,
+      //					      current_time, 0, "localhost", "h3", 1);
+      wt->ctx.cnx = nullptr;
       // picoquic_set_default_bbr_quantum_ratio(quic, 0.01);
       if (quic == NULL) {
 	ret = -1;
@@ -1838,9 +1781,9 @@ int WebTransport::server(std::string serverName, int port, const std::string con
   if (ret == 0) {
     /* Wait for packets */
     packet_loop_param.local_port = config->server_port;
-    packet_loop_param.local_af = AF_INET; // AF_UNSPEC, AF_INET, AF_INET6
-    packet_loop_param.dest_if = config->dest_if;
-    packet_loop_param.socket_buffer_size = config->socket_buffer_size;
+    packet_loop_param.local_af = AF_UNSPEC; // AF_UNSPEC, AF_INET, AF_INET6
+    packet_loop_param.dest_if = 0; // config->dest_if;
+    packet_loop_param.socket_buffer_size = 0; //config->socket_buffer_size;
     packet_loop_param.do_not_use_gso = 0;
     packet_loop_param.extra_socket_required = 0;
     packet_loop_param.simulate_eio = 0;
@@ -1873,7 +1816,8 @@ void WebTransport::print_address(FILE* F_log, struct sockaddr* address, char* la
   char hostname[256];
   
   const char* x = inet_ntop(address->sa_family,
-			    (address->sa_family == AF_INET) ? (void*)&(((struct sockaddr_in*)address)->sin_addr) : (void*)&(((struct sockaddr_in6*)address)->sin6_addr),
+			    (address->sa_family == AF_INET) ? (void*)&(((struct sockaddr_in*)address)->sin_addr) :
+			    (void*)&(((struct sockaddr_in6*)address)->sin6_addr),
 			    hostname, sizeof(hostname));
   
   fprintf(F_log, "%016llx : ", (unsigned long long)picoquic_val64_connection_id(cnx_id));

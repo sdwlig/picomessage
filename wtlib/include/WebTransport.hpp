@@ -20,11 +20,13 @@
 #undef LOGI
 #undef LOGV
 #undef LOGE
-#define LOG(...) {fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n");}
-#define LOGD(...) {fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n");}
-#define LOGI(...) {fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n");}
-#define LOGV(...) {fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n");}
-#define LOGE(...) {fprintf(stderr, __VA_ARGS__); fprintf(stdout, "\n");}
+extern std::mutex logMutex;
+#define LOGMUTEX std::lock_guard<std::mutex> guard(logMutex);
+#define LOG(...) {LOGMUTEX; fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); fflush(stdout);}
+#define LOGD(...) {LOGMUTEX; fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); fflush(stdout);}
+#define LOGI(...) {LOGMUTEX; fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); fflush(stdout);}
+#define LOGV(...) {LOGMUTEX; fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); fflush(stdout);}
+#define LOGE(...) {LOGMUTEX; fprintf(stdout, __VA_ARGS__); fprintf(stdout, "\n"); fflush(stdout);}
 
 #ifdef PLATFORM_WINDOWS
 #define WIN32_LEAN_AND_MEAN
