@@ -2,7 +2,7 @@
 set -x
 
 pwd
-mkdir -p build 2>/dev/null
+mkdir -p build www 2>/dev/null
 cd build && rm -rf *
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..
 ninja

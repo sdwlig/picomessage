@@ -1672,6 +1672,7 @@ int WebTransport::server(std::string serverName, int port, const std::string con
     logPath = lp;
     logFile = lp.append("/wt.log");
   }
+  config.www_dir = wwwDir.c_str();
   
   WebTransport* wt = (WebTransport*)this;
   picoquic_quic_config_t* config = &this->config;
@@ -1710,10 +1711,10 @@ int WebTransport::server(std::string serverName, int port, const std::string con
   picohttp_server_parameters_t picoquic_file_param;
   
   memset(&picoquic_file_param, 0, sizeof(picohttp_server_parameters_t));
-  picoquic_file_param.web_folder = config->www_dir;
-  picoquic_file_param.path_table = wt->path_item_list;
   wt->path_item_list[0].path_app_ctx = wt;
   wt->path_item_list[1].path_app_ctx = wt;
+  picoquic_file_param.web_folder = config->www_dir;
+  picoquic_file_param.path_table = wt->path_item_list;
   picoquic_file_param.path_table_nb = 2;
   
   /* Setup the server context */
@@ -2075,28 +2076,13 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
     {LOG("wt: service connecting");}
     break;
   case picohttp_callback_connect:
-    /* A connect has been received on this stream, and could be accepted.
-     */
-    /* The web transport should create a web transport connection context,
-     * and also register the stream ID as identifying this context.
-     * Then, callback the application. That means the WT app context
-     * should be obtained from the path app context, etc.
-     */
     ret = wt->accept_service(cnx, bytes, length, stream_ctx);
     {LOG("wt: service connect h3 WT");}
     break;
   case picohttp_callback_connect_refused:
-    /* The response from the server has arrived and it is negative. The
-     * application needs to close that stream.
-     * Do we need an error code? Maybe pass as bytes + length.
-     * Application should clean up the app context.
-     */
     {LOG("wt: service connect refused"); }
     break;
   case picohttp_callback_connect_accepted: /* Connection request was accepted by peer */
-    /* The response from the server has arrived and it is positive.
-     * The application can start sending data.
-     */
     if (stream_ctx != NULL) {
       stream_ctx->is_upgraded = 1;
     }
@@ -2106,21 +2092,12 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
   case picohttp_callback_post_fin:
   case picohttp_callback_post_data:
     {LOG("wt: service data");}
-    /* Data received on a stream for which the per-app stream context is known.
-     * the app just has to process the data, and process the fin bit if present.
-     */
     ret = wt->stream_data(bytes, length, (wt_event == picohttp_callback_post_fin), stream_ctx);
     break;
   case picohttp_callback_provide_data: /* Stack is ready to send chunk of response */
-    /* We assume that the required stream headers have already been pushed,
-     * and that the stream context is already set. Just send the data.
-     */
     ret = wt->provide_data(length, stream_ctx);
     break;
   case picohttp_callback_post_datagram:
-    /* Data received on a stream for which the per-app stream context is known.
-     * the app just has to process the data.
-     */
     ret = wt->receive_datagram(bytes, length, stream_ctx);
     break;
   case picohttp_callback_provide_datagram: /* Stack is ready to send a datagram */
