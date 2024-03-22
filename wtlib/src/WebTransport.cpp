@@ -759,7 +759,7 @@ int WebTransport::receive_datagram(const uint8_t* bytes, size_t length,
   return ret;
 }
 
-int WebTransport::provide_datagram(size_t space, struct st_h3zero_stream_ctx_t* stream_ctx)
+int WebTransport::provide_datagram(uint8_t* bytes, size_t space, struct st_h3zero_stream_ctx_t* stream_ctx)
 {
   int ret = 0;
   if (ctx.is_datagram_ready) {
@@ -1116,11 +1116,6 @@ int WebTransport::start_streams() {
 	  stream_ctx->path_callback_ctx = this;
 	  send_message(chan, "open", 4, true);
 	  ret = picoquic_mark_active_stream(ctx.cnx, sid, 1, stream_ctx);
-	  
-	  stream_ctx->path_callback     = client_callback;
-	  stream_ctx->path_callback_ctx = this;
-	  // ret = picoquic_mark_active_stream(cb_ctx->cnx, stream_ctx->stream_id, 1, stream_ctx);
-	  send_message(chan, "open", 4, true);
 	}
     }
   return ret;
@@ -1139,6 +1134,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
 {
   int ret = 0;
   WebTransport* wt = (WebTransport*)path_app_ctx; // callback_ctx;
+  wt->ctx.cnx = cnx;
   if ((int)wt_event == 8) {
     // LOGD("8"); // Prepare to send
   } else {
@@ -1153,7 +1149,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
     break;
   case picohttp_callback_connect:
     {
-      LOGD("wt: wt_client_callback connect");
+      LOGD("wt: accept_client connect");
       ret = wt->accept_client(bytes, length, stream_ctx);
     }
     break;
@@ -1192,7 +1188,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
     break;
   case picohttp_callback_provide_datagram: /* Stack is ready to send a datagram */
     {
-      ret = wt->provide_datagram(length, stream_ctx);
+      ret = wt->provide_datagram(bytes, length, stream_ctx);
     }
     break;
   case picohttp_callback_reset: /* Stream has been abandoned. */
@@ -1730,8 +1726,8 @@ int WebTransport::server(std::string serverName, int port, const std::string con
     }
     // ret = picoquic_config_set_option(config, picoquic_option_LOG_FILE, "C:/c/log/wt.log");
     if (ret == 0) {
-      quic = picoquic_create_and_configure(config, picoquic_demo_server_callback, &picoquic_file_param, current_time, NULL);
-      static struct sockaddr_storage server_address;
+      quic = picoquic_create_and_configure(config, quic_server_callback, &picoquic_file_param, current_time, NULL);
+      // static struct sockaddr_storage server_address;
       // picoquic_cnx_t* cnx = cnx = picoquic_create_cnx(quic, picoquic_null_connection_id,
       //					      picoquic_null_connection_id,
       //					      nullptr, // (struct sockaddr*) & server_address,
@@ -1743,9 +1739,9 @@ int WebTransport::server(std::string serverName, int port, const std::string con
       }
       else {
 	picoquic_set_default_wifi_shadow_rtt(quic, 150 * 1000);
-	// picoquic_set_key_log_file_from_env(quic);
+        // picoquic_set_key_log_file_from_env(quic);
 	
-	picoquic_set_alpn_select_fn(quic, picoquic_demo_server_callback_select_alpn);
+	picoquic_set_alpn_select_fn(quic, quic_server_callback_select_alpn);
 	
 	// picoquic_use_unique_log_names(quic, 1);
 	
@@ -2101,7 +2097,7 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
     ret = wt->receive_datagram(bytes, length, stream_ctx);
     break;
   case picohttp_callback_provide_datagram: /* Stack is ready to send a datagram */
-    ret = wt->provide_datagram(length, stream_ctx);
+    ret = wt->provide_datagram(bytes, length, stream_ctx);
     break;
   case picohttp_callback_reset: /* Stream has been abandoned. */
     /* If control stream: abandon the whole connection. */
@@ -2220,4 +2216,41 @@ bool wt_zeros(const char* bytes, int len) {
     }
   }
   return ret;
+}
+
+int quic_server_callback(picoquic_cnx_t* cnx,
+    uint64_t stream_id, uint8_t* bytes, size_t length,
+    picoquic_call_back_event_t fin_or_event, void* callback_ctx, void* v_stream_ctx)
+{
+    int ret = 0;
+    picoquic_alpn_enum alpn_code = picoquic_alpn_undef;
+    char const * alpn = picoquic_tls_get_negotiated_alpn(cnx);
+
+    if (alpn != NULL) {
+        alpn_code = picoquic_parse_alpn(alpn);
+    }
+
+    switch (alpn_code) {
+    case picoquic_alpn_http_3:
+        ret = h3zero_callback(cnx, stream_id, bytes, length, fin_or_event, callback_ctx, v_stream_ctx);
+        break;
+    default:
+      LOGE("quic_server_callback: Unsupported alpn mode");
+    };
+    return ret;
+}
+
+/* Callback from the TLS stack upon receiving a list of proposed ALPN in the Client Hello */
+size_t quic_server_callback_select_alpn(picoquic_quic_t* quic, ptls_iovec_t* list, size_t count)
+{
+    size_t ret = count;
+
+    for (size_t i = 0; i < count; i++) {
+        if (picoquic_parse_alpn_nz((const char *)list[i].base, list[i].len) != picoquic_alpn_undef) {
+            ret = i;
+            break;
+        }
+    }
+
+    return ret;
 }

@@ -67,6 +67,7 @@ extern std::mutex logMutex;
 
 #endif
 
+#include "picotls.h"
 #include "picoquic/picoquic.h"
 #include "picoquic/picoquic_packet_loop.h"
 #include "picohttp/h3zero_common.h"
@@ -481,7 +482,7 @@ public:
   int receive_datagram(const uint8_t* bytes, size_t length,
 		       struct st_h3zero_stream_ctx_t* stream_ctx);
   void  print_address(FILE* F_log, struct sockaddr* address, char* label, picoquic_connection_id_t cnx_id);
-  int provide_datagram(size_t space, struct st_h3zero_stream_ctx_t* stream_ctx);
+  int provide_datagram(uint8_t* bytes,size_t space, struct st_h3zero_stream_ctx_t* stream_ctx);
   int connecting(h3zero_stream_ctx_t* stream_ctx);
   int check(h3zero_stream_ctx_t* stream_ctx, uint8_t received);
   int incoming_data(st_h3zero_stream_ctx_t* stream_ctx,
@@ -506,6 +507,12 @@ public:
   int connect_control(h3zero_callback_ctx_t* h3_ctx);
   void update_callbacks();
   int close(int appchan);
+
 };
+
+  size_t quic_server_callback_select_alpn(picoquic_quic_t* quic, ptls_iovec_t* list, size_t count);
+  int quic_server_callback(picoquic_cnx_t* cnx,
+			   uint64_t stream_id, uint8_t* bytes, size_t length,
+			   picoquic_call_back_event_t fin_or_event, void* callback_ctx, void* v_stream_ctx);
 
 #endif

@@ -11,6 +11,9 @@ message(${CMAKE_CURRENT_LIST_DIR})
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake" "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(PROJECT_DEPS_DIR "${CMAKE_CURRENT_LIST_DIR}/../AndroidExternals")
 
+SET(CMAKE_CXX_FLAGS_DEBUG "-O0")
+SET(CMAKE_C_FLAGS_DEBUG "-O0")
+
 add_subdirectory(wtlib)
 #    find_library(wtlib
 #        NO_CMAKE_SYSTEM_PATH
