@@ -153,7 +153,7 @@ typedef struct st_wt_callbacks_t {
 
 #define MAX_TIMES 36 // Avoid expensive logging
 #define TIMES_TIME 5000
-#define MAX_WT_CHANNEL 8
+#define MAX_WT_CHANNEL 4
 // const int MAX_WT_CHANNEL = 8;
 
 const int preamble_size = sizeof(uint32_t) * 3 + sizeof(size_t);
@@ -330,6 +330,7 @@ class WebTransport {
 #else
   picoquic_thread_t wtThread = {0};
 #endif
+  picoquic_quic_t* quic = NULL;
   int ac = 0;
   int channelReceiveStats[4] = {0};
   uint64_t lastReceiveStatsStart;
@@ -380,6 +381,10 @@ class WebTransport {
   std::vector<std::vector<int64_t>> msgTimesSendEnd;
   std::vector<std::vector<int64_t>> msgTimesRecv;
   uint64_t lastSendStatsStart;
+
+  // Client variables
+  struct sockaddr_storage server_address;
+  char const* sni = "test";
   
   picohttp_server_path_item_t path_item_list[2] =
     {
@@ -415,6 +420,7 @@ public:
   std::mutex mutex;
   std::mutex vector_mutex;
   wt_ctx_t ctx;
+  picohttp_server_parameters_t picoquic_file_param;
   picoquic_network_thread_ctx_t* thread_ctx;
   picoquic_packet_loop_param_t packet_loop_param;
   WebTransport() {

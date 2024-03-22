@@ -963,7 +963,7 @@ int WebTransport::stream_data(uint8_t* bytes, size_t length, int is_fin,
   if (is_fin) {
     LOGD("wt: Fin received for stream: %lu", stream_ctx->stream_id);
   }
-  
+
   size_t channel_id = SIZE_MAX;
   
   if (stream_ctx->stream_id == ctx.control_stream_id) {
@@ -986,6 +986,7 @@ int WebTransport::stream_data(uint8_t* bytes, size_t length, int is_fin,
   }
   else {
     int32_t appchan = sid_appchan_map[stream_ctx->stream_id];
+    LOGD("stream_data: %d bytes on channel %d", (int)length, (int)appchan);
     bool sendOpen = false;
     if (appchan < 0)
       { // We are sure to be at the start of a message which has appchan.
@@ -1134,7 +1135,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
 {
   int ret = 0;
   WebTransport* wt = (WebTransport*)path_app_ctx; // callback_ctx;
-  wt->ctx.cnx = cnx;
+  // wt->ctx.cnx = cnx;
   if ((int)wt_event == 8) {
     // LOGD("8"); // Prepare to send
   } else {
@@ -1390,11 +1391,6 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
   printProcessThreadPriority(env);
 #endif
 
-  static struct sockaddr_storage server_address;
-  static picoquic_quic_t* quic = NULL;
-  static h3zero_callback_ctx_t* h3_ctx = NULL;
-  
-  char const* sni = "test";
   uint64_t current_time = picoquic_current_time();
   
   /* Get the server's address */
@@ -1447,8 +1443,8 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
   // picoquic_set_default_bbr_quantum_ratio(quic, 0.05);
   
   if (ret == 0) {
-    h3_ctx = h3zero_callback_create_context(NULL);
-    if (h3_ctx == NULL) {
+    ctx.h3_ctx = h3zero_callback_create_context(NULL);
+    if (ctx.h3_ctx == NULL) {
       ret = 1;
     }
   }
@@ -1465,17 +1461,16 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
       ret = -1;
     }
     else {
-      ctx.h3_ctx = h3_ctx;
       ctx.cnx = cnx;
       ctx.is_client = 1;
       ctx.server_path = path;
       picowt_set_transport_parameters(cnx);
-      picoquic_set_callback(cnx, h3zero_callback, h3_ctx);
+      picoquic_set_callback(cnx, h3zero_callback, ctx.h3_ctx);
       /* Initialize the callback context. First, create a bidir stream */
-      app_ctx_init(h3_ctx, NULL);
+      app_ctx_init(ctx.h3_ctx, NULL);
       
       /* Create a stream context for the connect call. */
-      ret = connect_control(h3_ctx);
+      ret = connect_control(ctx.h3_ctx);
       
       /* Client connection parameters could be set here, before starting the connection. */
       if (ret == 0) {
@@ -1539,7 +1534,7 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
   // 			       ctx.capsule.error_msg_len));
   // }
   
-  if (h3_ctx != NULL) {
+  if (ctx.h3_ctx != NULL) {
     if (ctx.cnx) h3zero_callback_delete_context(ctx.cnx, h3_ctx);
   }
   
@@ -1622,12 +1617,14 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
     case picoquic_packet_loop_after_receive:
       if (picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
 	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+	wt->thread_ctx->thread_should_close = true;
 	LOGD("wt: PICOQUIC_NO_ERROR_TERMINATE");
       }
       break;
     case picoquic_packet_loop_after_send:
       if (picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
 	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+	wt->thread_ctx->thread_should_close = true;
 	LOGD("wt: PICOQUIC_NO_ERROR_TERMINATE");
       }
       break;
@@ -1635,6 +1632,7 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
       break;
     default:
       ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+      wt->thread_ctx->thread_should_close = true;
       LOGD("wt: PICOQUIC_ERROR_UNEXPECTED_ERROR");
       break;
     }
@@ -1704,7 +1702,6 @@ int WebTransport::server(std::string serverName, int port, const std::string con
 
   picoquic_quic_t* quic = NULL;
   uint64_t current_time = 0;
-  picohttp_server_parameters_t picoquic_file_param;
   
   memset(&picoquic_file_param, 0, sizeof(picohttp_server_parameters_t));
   wt->path_item_list[0].path_app_ctx = wt;
@@ -1738,6 +1735,7 @@ int WebTransport::server(std::string serverName, int port, const std::string con
 	ret = -1;
       }
       else {
+	wt->quic = quic;
 	picoquic_set_default_wifi_shadow_rtt(quic, 150 * 1000);
         // picoquic_set_key_log_file_from_env(quic);
 	

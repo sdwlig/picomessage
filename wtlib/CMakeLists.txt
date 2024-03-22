@@ -13,8 +13,8 @@ project(wt)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 set(PROJECT_DEPS_DIR "${CMAKE_CURRENT_LIST_DIR}/../AndroidExternals")
 
-SET(CMAKE_CXX_FLAGS_DEBUG "-O0")
-SET(CMAKE_C_FLAGS_DEBUG "-O0")
+SET(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
+SET(CMAKE_C_FLAGS_DEBUG "-g -O0")
 
 # find_package(libpcap REQUIRED)
 # find_package(nlohmann REQUIRED)
