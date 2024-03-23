@@ -29,7 +29,7 @@ void mcbc(int chan,
 	 uint64_t endTime) {
   WebTransport* wt = (WebTransport*)ptr;
   LOG("client: Message on chan:%d len:%d", chan, len);
-  wt->send(1, "Hello, world!", -1);
+  // wt->send(1, "Hello, world!", -1);
   //  wt.close();
 }
 
@@ -39,12 +39,14 @@ int main() {
   wt.set_callbacks(0, ocbs, mcbs, &wt);
   wt.set_callbacks(1, ocbs, mcbs, &wt);
   wt.set_callbacks(2, ocbs, mcbs, &wt);
+  wt.set_callbacks(3, ocbs, mcbs, &wt);
   wt.server("localhost", 4433, "./", "./");
   
   WebTransport wtc;
   wtc.set_callbacks(0, ocbc, mcbc, &wtc);
   wtc.set_callbacks(1, ocbc, mcbc, &wtc);
   wtc.set_callbacks(2, ocbc, mcbc, &wtc);
+  wtc.set_callbacks(3, ocbc, mcbc, &wtc);
   wtc.client("localhost", 4433, "/baton");
 
   LOG("wttest: sending test");

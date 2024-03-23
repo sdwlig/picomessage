@@ -496,7 +496,7 @@ public:
 		    const uint8_t* messageBytes, size_t messageLength);
   int stream_data(uint8_t* bytes, size_t length, int is_fin,
 		  struct st_h3zero_stream_ctx_t* stream_ctx);
-  int provide_data(size_t space, struct st_h3zero_stream_ctx_t* stream_ctx);
+  int provide_data(void* bytes, size_t space, struct st_h3zero_stream_ctx_t* stream_ctx);
   int callback(picoquic_cnx_t* cnx,
 	       uint8_t* bytes, size_t length,
 	       picohttp_call_back_event_t wt_event,

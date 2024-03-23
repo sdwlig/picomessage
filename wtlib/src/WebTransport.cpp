@@ -353,7 +353,7 @@ uint64_t fnv64(const uint8_t* pb, const uint8_t* pbend)
  * Process the FIN of a stream.
  */
 
-int WebTransport::provide_data(size_t space, struct st_h3zero_stream_ctx_t* stream_ctx)
+int WebTransport::provide_data(void* bytes, size_t space, struct st_h3zero_stream_ctx_t* stream_ctx)
 {
   bool debugBytes = false;
   static bool debugOnce = true;
@@ -366,14 +366,14 @@ int WebTransport::provide_data(size_t space, struct st_h3zero_stream_ctx_t* stre
   int32_t appchan = sid_appchan_map[stream_ctx->stream_id];
   if (appchan < 0) {
     LOGE("wt: wt_provide_data appchan not known for stream_id:%d", (int)stream_ctx->stream_id);
-    (void)picoquic_provide_stream_data_buffer(&stream_ctx, 0, 0, 0);
+    (void)picoquic_provide_stream_data_buffer(bytes, 0, 0, 0);
     return 0;
   }
   wt_channel_t& channel = ctx.channels[appchan];
   
   std::lock_guard<std::mutex> guard(vector_mutex);
   if (channel.out.empty()) {
-    (void)picoquic_provide_stream_data_buffer(&stream_ctx, 0, 0, 0);
+    (void)picoquic_provide_stream_data_buffer(bytes, 0, 0, 0);
     return 0;
   }
   if ((ret == 0) && channel.out.front().complete && (channel.state == wt_state_sending || channel.state == wt_state_ready)) {
@@ -398,7 +398,7 @@ int WebTransport::provide_data(size_t space, struct st_h3zero_stream_ctx_t* stre
       use = space;
     }
     int sending = use;
-    uint8_t* output = picoquic_provide_stream_data_buffer(&stream_ctx, use, 0, more_to_send);
+    uint8_t* output = picoquic_provide_stream_data_buffer(bytes, use, 0, more_to_send);
     if (!output) {
       LOGE("provide_data: provide_stream_data_buffer returned null");
       ret = 1;
@@ -438,7 +438,7 @@ int WebTransport::provide_data(size_t space, struct st_h3zero_stream_ctx_t* stre
     
   }
   else {
-    (void)picoquic_provide_stream_data_buffer(&stream_ctx, 0, 0, 0);
+    (void)picoquic_provide_stream_data_buffer(bytes, 0, 0, 0);
   }
   
   return ret;
@@ -546,6 +546,7 @@ void WebTransport::set_channel_priority(int sid) {
 int WebTransport::accept_client(uint8_t* path, size_t path_length,
 				struct st_h3zero_stream_ctx_t* stream_ctx)
 {
+  LOG("accept_client start");
   int ret = 0;
   h3zero_callback_ctx_t* h3_ctx = (h3zero_callback_ctx_t*)picoquic_get_callback_context(ctx.cnx);
   {
@@ -570,6 +571,7 @@ int WebTransport::accept_client(uint8_t* path, size_t path_length,
     }
     if (ret == 0) {
       for (int chan = 0; chan < MAX_WT_CHANNEL; chan++) {
+	LOGD("accept_client: creating stream:%d", chan);
 	if ((stream_ctx =
 	     picowt_create_local_stream(ctx.cnx, 1, ctx.h3_ctx,
 					ctx.control_stream_id)) == NULL) {
@@ -1135,7 +1137,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
 {
   int ret = 0;
   WebTransport* wt = (WebTransport*)path_app_ctx; // callback_ctx;
-  // wt->ctx.cnx = cnx;
+  wt->ctx.cnx = cnx;
   if ((int)wt_event == 8) {
     // LOGD("8"); // Prepare to send
   } else {
@@ -1179,7 +1181,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
     break;
   case picohttp_callback_provide_data: /* Stack is ready to send chunk of response */
     {
-      ret = wt->provide_data(length, stream_ctx);
+      ret = wt->provide_data(bytes, length, stream_ctx);
     }
     break;
   case picohttp_callback_post_datagram:
@@ -2089,7 +2091,7 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
     ret = wt->stream_data(bytes, length, (wt_event == picohttp_callback_post_fin), stream_ctx);
     break;
   case picohttp_callback_provide_data: /* Stack is ready to send chunk of response */
-    ret = wt->provide_data(length, stream_ctx);
+    ret = wt->provide_data(bytes, length, stream_ctx);
     break;
   case picohttp_callback_post_datagram:
     ret = wt->receive_datagram(bytes, length, stream_ctx);
