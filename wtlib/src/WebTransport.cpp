@@ -362,7 +362,7 @@ int WebTransport::provide_data(void* bytes, size_t space, struct st_h3zero_strea
     debugOnce = false;
   }
   int ret = 0;
-  if (sid_appchan_map[stream_ctx->stream_id] < 0) return 0; // Too early to send data.
+  if (stream_ctx->stream_id == 0 || sid_appchan_map[stream_ctx->stream_id] < 0) return 0; // Too early to send data.
   int32_t appchan = sid_appchan_map[stream_ctx->stream_id];
   if (appchan < 0) {
     LOGE("wt: wt_provide_data appchan not known for stream_id:%d", (int)stream_ctx->stream_id);
@@ -428,6 +428,7 @@ int WebTransport::provide_data(void* bytes, size_t space, struct st_h3zero_strea
     ctx.nb_bytes_sent += headerConsumed + consumed;
     
     if (!ret && sent == required + header) {
+	dumpBytes("out", appchan, required, outData.size(), offset, output, true);
       uint64_t now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
       if (msgTimesSend[appchan].size())
 	msgTimesSendEnd[appchan].push_back(now);
@@ -448,9 +449,11 @@ int WebTransport::provide_data(void* bytes, size_t space, struct st_h3zero_strea
 /* Initialize the content of a wt context.
  * TODO: replace internal pointers by pointer to h3zero context
  */
-int WebTransport::app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx)
+int WebTransport::app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx,
+			       picohttp_post_data_cb_fn callback)
 {
   int ret = 0;
+  /*
   ctx.nb_channels = 0;
   for (int i = 0; i < MAX_WT_CHANNEL; i++) {
     ctx.channels[i].id = i;
@@ -463,7 +466,7 @@ int WebTransport::app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_
 					    uint64_t startTime, uint64_t endTime) {
 	LOGD("wt: message received on channel %d", id);
       };
-  }
+      } */
   /* Init the stream tree */
   /* Do we use the path table for the client? or the web folder? */
   /* connection wide tracking of stream prefixes */
@@ -482,7 +485,7 @@ int WebTransport::app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_
       ctx.control_stream_id = stream_ctx->stream_id;
       stream_ctx->ps.stream_state.control_stream_id = stream_ctx->stream_id;
       stream_ctx->path_callback_ctx = this;
-      ret = h3zero_declare_stream_prefix(ctx.h3_ctx, stream_ctx->stream_id, client_callback, this);
+      ret = h3zero_declare_stream_prefix(ctx.h3_ctx, stream_ctx->stream_id, callback, this);
     }
     else {
       /* Poison the control stream ID field so errors can be detected. */
@@ -552,7 +555,7 @@ int WebTransport::accept_client(uint8_t* path, size_t path_length,
   {
     update_callbacks();
     /* register the incoming stream ID */
-    ret = app_ctx_init(h3_ctx, stream_ctx);
+    ret = app_ctx_init(h3_ctx, stream_ctx, client_callback);
     
     /* init the global parameters */
     if (path != NULL && path_length > 0) {
@@ -590,8 +593,7 @@ int WebTransport::accept_client(uint8_t* path, size_t path_length,
 	channel.state = wt_state_sending;
 	channel.stream_ctx = stream_ctx;
 	if (ctx.channels[chan].openCallback) {
-	  (*ctx.channels[chan].openCallback)(
-					     chan, ctx.channels[chan].userData);
+	  (*ctx.channels[chan].openCallback)(chan, ctx.channels[chan].userData);
 	  channel.openCallbackCalled = true;
 	}
 	stream_ctx->path_callback = client_callback;
@@ -691,7 +693,7 @@ void WebTransport::unlink_context(struct st_h3zero_stream_ctx_t* control_stream_
   picoquic_log_app_message(ctx.cnx, "wt: Prefix for control stream %" PRIu64 " was unregistered", control_stream_ctx->stream_id);
   LOGD("wt: Prefix for control stream %" PRIu64 " was unregistered", control_stream_ctx->stream_id);
   std::lock_guard<std::mutex> guard(vector_mutex);
-  for (int i = 0; i < ctx.nb_channels; i++) {
+  for (int i = 0; i < ctx.nb_channels && i < MAX_WT_CHANNEL; i++) {
     wt_channel_t& channel = ctx.channels[i];
     channel.openCallbackCalled = false;
     channel.state = wt_state_none;
@@ -801,7 +803,8 @@ int WebTransport::connecting(h3zero_stream_ctx_t* stream_ctx)
   
   picoquic_log_app_message(ctx.cnx, "wt: Outgoing connect on stream: %" PRIu64, stream_ctx->stream_id);
   LOGD("wt: Outgoing connect on stream: %" PRIu64, stream_ctx->stream_id);
-  ctx.state = wt_state_ready; // wt_state_sending
+  ctx.stream_ctx = stream_ctx;
+  ctx.state = wt_state_sending; // wt_state_ready;
   ctx.control_stream_id = stream_ctx->stream_id;
   
   return 0;
@@ -965,10 +968,12 @@ int WebTransport::stream_data(uint8_t* bytes, size_t length, int is_fin,
   if (is_fin) {
     LOGD("wt: Fin received for stream: %lu", stream_ctx->stream_id);
   }
+    LOGD("wt: stream_data for stream: %lu", stream_ctx->stream_id);
 
   size_t channel_id = SIZE_MAX;
   
   if (stream_ctx->stream_id == ctx.control_stream_id) {
+    LOGE("Received stream_data for control stream.");
     return 0;
     stream_ctx->ps.stream_state.is_fin_received = 1;
     if (ctx.is_client) {
@@ -1141,7 +1146,7 @@ int WebTransport::client_callback(picoquic_cnx_t* cnx,
   if ((int)wt_event == 8) {
     // LOGD("8"); // Prepare to send
   } else {
-    LOGD("client_callback: %d, %" PRIi64 "\n", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
+    LOGD("client_callback: %d, %" PRIi64 "", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
   }
   switch (wt_event) {
   case picohttp_callback_connecting:
@@ -1256,7 +1261,7 @@ int WebTransport::process_remote_stream(uint64_t stream_id, uint8_t* bytes, size
 void WebTransport::set_receive_ready()
 {
   ctx.is_upgraded = 0;
-  for (size_t i = 0; i < ctx.nb_channels; i++) {
+  for (size_t i = 0; i < ctx.nb_channels && i < MAX_WT_CHANNEL; i++) {
     ctx.channels[i].state = wt_state_ready;
     ctx.channels[i].incoming.is_receiving = 0;
     ctx.channels[i].incoming.expected = UINT32_MAX;
@@ -1469,7 +1474,7 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
       picowt_set_transport_parameters(cnx);
       picoquic_set_callback(cnx, h3zero_callback, ctx.h3_ctx);
       /* Initialize the callback context. First, create a bidir stream */
-      app_ctx_init(ctx.h3_ctx, NULL);
+      app_ctx_init(ctx.h3_ctx, NULL, client_callback);
       
       /* Create a stream context for the connect call. */
       ret = connect_control(ctx.h3_ctx);
@@ -1504,6 +1509,7 @@ int WebTransport::client(char const * server_nameIn, int server_portIn, char con
     packet_loop_param.extra_socket_required = 0;
     packet_loop_param.simulate_eio = 0;
     packet_loop_param.send_length_max = 0;
+    // memset(ctx.channels, sizeof(ctx.channels), 0);
     thread_ctx = picoquic_start_custom_network_thread(quic, &packet_loop_param,
 						      nullptr, nullptr, nullptr,
 						      "wtclient", client_loop_cb, this, &ret);
@@ -1584,7 +1590,7 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
 	LOGD("wt: client: PICOQUIC waiting for packets");
 	auto options           = (picoquic_packet_loop_options_t*)callback_arg;
 	options->do_time_check = true;
-	wt->start_streams();
+	// wt->start_streams();
       }
       break;
     case picoquic_packet_loop_time_check:
@@ -1596,8 +1602,8 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
 	  static int count = 0;
 	  std::lock_guard<std::mutex> guard(wt->vector_mutex);
 	  if (ctx->nb_channels == 0)
-	    ctx->nb_channels = 8;
-	  for (int i = 0; i < ctx->nb_channels; i++)
+	    ctx->nb_channels = MAX_WT_CHANNEL;
+	  for (int i = 0; i < ctx->nb_channels && i < MAX_WT_CHANNEL; i++)
 	    {
 	      static int ccount = 0;
 	      wt_channel_t* channel = &ctx->channels[i];
@@ -1617,17 +1623,19 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
       }
       break;
     case picoquic_packet_loop_after_receive:
-      if (picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
+      if (cnx && picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
 	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
 	wt->thread_ctx->thread_should_close = true;
-	LOGD("wt: PICOQUIC_NO_ERROR_TERMINATE");
+	wt->done = true;
+	LOGD("wt: client: PICOQUIC_NO_ERROR_TERMINATE");
       }
       break;
     case picoquic_packet_loop_after_send:
-      if (picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
+      if (cnx && picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
 	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
 	wt->thread_ctx->thread_should_close = true;
-	LOGD("wt: PICOQUIC_NO_ERROR_TERMINATE");
+	wt->done = true;
+	LOGD("wt: client: PICOQUIC_NO_ERROR_TERMINATE");
       }
       break;
     case picoquic_packet_loop_port_update:
@@ -1635,7 +1643,8 @@ int WebTransport::client_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
     default:
       ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
       wt->thread_ctx->thread_should_close = true;
-      LOGD("wt: PICOQUIC_ERROR_UNEXPECTED_ERROR");
+      wt->done = true;
+      LOGD("wt: client: PICOQUIC_ERROR_UNEXPECTED_ERROR");
       break;
     }
   }
@@ -1864,8 +1873,8 @@ int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
 	  static int count = 0;
 	  std::lock_guard<std::mutex> guard(wt->vector_mutex);
 	  if (ctx->nb_channels == 0)
-	    ctx->nb_channels = 8;
-	  for (int i = 0; i < ctx->nb_channels; i++)
+	    ctx->nb_channels = MAX_WT_CHANNEL;
+	  for (int i = 0; i < ctx->nb_channels && i < MAX_WT_CHANNEL; i++)
 	    {
 	      static int ccount = 0;
 	      if ((ccount++ % 40) == 0) {
@@ -1887,15 +1896,28 @@ int WebTransport::server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_
       break;
     case picoquic_packet_loop_after_receive:
       {LOG("wt: server_loop after_receive");}
+      if (cnx && picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
+	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+	wt->thread_ctx->thread_should_close = true;
+	wt->done = true;
+	LOGD("wt: server: PICOQUIC_NO_ERROR_TERMINATE");
+      }
       break;
     case picoquic_packet_loop_after_send:
-      // {LOG("wt: server_loop after_send");}
+      if (cnx && picoquic_get_cnx_state(cnx) == picoquic_state_disconnected) {
+	ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+	wt->thread_ctx->thread_should_close = true;
+	wt->done = true;
+	LOGD("wt: server: PICOQUIC_NO_ERROR_TERMINATE");
+      }
       break;
     case picoquic_packet_loop_port_update:
       {LOG("wt: server_loop port_update");}
       break;
     default:
       ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+      wt->thread_ctx->thread_should_close = true;
+      wt->done = true;
       {LOG("wt: server_loop Unexpected Error");}
       break;
     }
@@ -2016,11 +2038,11 @@ int WebTransport::accept_service(picoquic_cnx_t* cnxIn,
   LOG("wt_accept_service called for new connection");
   int ret = 0;
   ctx.cnx = cnxIn;
-  h3zero_callback_ctx_t* h3_ctx = ctx.h3_ctx; // (h3zero_callback_ctx_t*)picoquic_get_callback_context(ctx.cnx);
+  h3zero_callback_ctx_t* h3_ctx = (h3zero_callback_ctx_t*)picoquic_get_callback_context(ctx.cnx);
   {
     LOG("wt: wt_accept_service Accepting incoming connection");
     /* register the incoming stream ID */
-    ret = app_ctx_init(h3_ctx, stream_ctx);
+    ret = app_ctx_init(h3_ctx, stream_ctx, service_callback);
     
     /* init the global parameters */
     if (path != NULL && path_length > 0) {
@@ -2032,7 +2054,7 @@ int WebTransport::accept_service(picoquic_cnx_t* cnxIn,
       stream_ctx->path_callback = service_callback;
       stream_ctx->path_callback_ctx = this;
       ctx.connection_ready = 1;
-      // ctx.nb_channels = 0; // Reset so new channels are accepted.
+      ctx.nb_channels = 0; // Reset so new channels are accepted.
       ctx.state = wt_state_sending; // wt_state_ready;
       if (stream_ctx->stream_id > 0) {
 	ret = picoquic_mark_active_stream(ctx.cnx, stream_ctx->stream_id, 1, stream_ctx);
@@ -2052,8 +2074,6 @@ int WebTransport::accept_service(picoquic_cnx_t* cnxIn,
   return ret;
 }
 
-
-
 /* Web transport callback. This will be called from the web server
  * when the path points to a web transport callback.
  */
@@ -2065,7 +2085,9 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
 {
   WebTransport* wt = (WebTransport*)path_app_ctx;
   int ret = 0;
-  DBG_PRINTF("service_callback: %d, %" PRIi64 "\n", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
+  if (wt_event != 8) {
+    LOGD("service_callback: %d, %" PRIi64 "", (int)wt_event, (stream_ctx == NULL)?(int64_t)-1:(int64_t)stream_ctx->stream_id);
+  }
   switch (wt_event) {
   case picohttp_callback_connecting:
     ret = wt->connecting(stream_ctx);
@@ -2087,10 +2109,11 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
     
   case picohttp_callback_post_fin:
   case picohttp_callback_post_data:
-    {LOG("wt: service data");}
+    {LOG("wt: service stream data");}
     ret = wt->stream_data(bytes, length, (wt_event == picohttp_callback_post_fin), stream_ctx);
     break;
   case picohttp_callback_provide_data: /* Stack is ready to send chunk of response */
+    // {LOG("wt: service provide data");}
     ret = wt->provide_data(bytes, length, stream_ctx);
     break;
   case picohttp_callback_post_datagram:
@@ -2114,7 +2137,7 @@ int WebTransport::service_callback(st_picoquic_cnx_t* cnx, uint8_t* bytes, size_
     {LOG("wt: service deregister");}
     wt->unlink_context(stream_ctx);
     {
-      for (int i = 0; wt->ctx.nb_channels; i++) {
+      for (int i = 0; i < wt->ctx.nb_channels && i < MAX_WT_CHANNEL; i++) {
 	wt_channel_t* channel = &wt->ctx.channels[i];
 	memset(&channel, 0, sizeof(channel));
       }

@@ -97,6 +97,9 @@ typedef void (*wtMessageCallbackFunc)(int id,
 
 typedef struct st_wt_app_ctx_t {
   int status;
+  st_wt_app_ctx_t() {
+    status = 0;
+  }
 } wt_app_ctx_t;
 
 typedef struct st_wt_incoming_t {
@@ -106,6 +109,14 @@ typedef struct st_wt_incoming_t {
   uint32_t message_id;
   uint64_t startTime;
   bool started;
+  st_wt_incoming_t() {
+    is_receiving = 0;
+    expected = 0;
+    received = 0;
+    message_id = 0;
+    startTime = 0;
+    started = false;
+  }
 } wt_incoming_t;
 
 typedef struct st_wt_outgoing_t {
@@ -113,6 +124,12 @@ typedef struct st_wt_outgoing_t {
   bool started;
   uint32_t required;  /* UINT32_MAX if unknown */
   uint32_t sent;
+  st_wt_outgoing_t() {
+    is_sending = false;
+    started = false;
+    required = 0;
+    sent = 0;
+  }
 } wt_outgoing_t;
 
 
@@ -226,6 +243,7 @@ typedef struct st_wt_channel_t {
 typedef struct st_wt_ctx_t {
   picoquic_cnx_t* cnx;
   h3zero_callback_ctx_t* h3_ctx;
+  h3zero_stream_ctx_t* stream_ctx;
   std::string server_path;
   uint64_t control_stream_id;
   /* Capsule state */
@@ -267,6 +285,12 @@ typedef struct st_wt_post_t {
   size_t nb_sent;
   size_t response_length;
   char posted[256];
+  st_wt_post_t() {
+    nb_received = 0;
+    nb_sent = 0;
+    response_length = 0;
+    memset(posted, sizeof(posted), 0);
+  }
 } wtserver_post_test_t;
 
 
@@ -312,6 +336,9 @@ typedef struct st_client_loop_cb_t {
   int nb_alt_paths;
   picoquic_connection_id_t server_cid_before_migration;
   picoquic_connection_id_t client_cid_before_migration;
+  st_client_loop_cb_t() {
+    memset(this, sizeof(st_client_loop_cb_t), 0);
+  }
 } client_loop_cb_t;
 
 char* picoquic_strsep(char** stringp, const char* delim);
@@ -333,11 +360,11 @@ class WebTransport {
   picoquic_quic_t* quic = NULL;
   int ac = 0;
   int channelReceiveStats[4] = {0};
-  uint64_t lastReceiveStatsStart;
+  uint64_t lastReceiveStatsStart = 0;
   bool ready = false;
-  int just_once;
-  int first_connection_seen;
-  int connection_done;
+  int just_once = 0;
+  int first_connection_seen = 0;
+  int connection_done = 0;
   
   picoquic_quic_config_t config;
   std::string certPath;  // These are passed via .c_str() so keep them allocated.
@@ -346,7 +373,7 @@ class WebTransport {
   std::string logPath;
   std::string logFile;
   char option_string[512];
-  int opt;
+  int opt = 0;
   
   std::string server_name;
   int server_port = default_server_port;
@@ -407,7 +434,7 @@ class WebTransport {
   extern android_app* g_app;
 #endif
   
-  pthread_once_t g_jni_ptr_once;
+  pthread_once_t g_jni_ptr_once = false;
   
 #ifdef PLATFORM_WINDOWS
   // WSADATA wsaData = { 0 };
@@ -424,6 +451,7 @@ public:
   picoquic_network_thread_ctx_t* thread_ctx;
   picoquic_packet_loop_param_t packet_loop_param;
   WebTransport() {
+    thread_ctx = nullptr;
     lastReceiveStatsStart = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     memset(&channelSendStats, 0, sizeof(channelSendStats));
     msgTimesSend.resize(trackedTimes);
@@ -474,8 +502,8 @@ public:
   static picoquic_thread_return_t server_thread_loop(void* that);
   // int ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx);
   int ctx_path_params(const uint8_t* path, size_t path_length);
-  int app_ctx_init_hide(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx);
-  int app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx);
+  int app_ctx_init_hide(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx, picohttp_post_data_cb_fn function_call);
+  int app_ctx_init(h3zero_callback_ctx_t* h3_ctx, h3zero_stream_ctx_t* stream_ctx, picohttp_post_data_cb_fn function_call);
   int accept_client(uint8_t* path, size_t path_length,
 		    struct st_h3zero_stream_ctx_t* stream_ctx);
   int accept_service(picoquic_cnx_t* cnx,
